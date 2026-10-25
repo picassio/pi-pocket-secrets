@@ -1,0 +1,11 @@
+{
+    "name": "pi-pocket-secrets",
+    "private": true,
+    "description": "Development only: the gallery installs secrets.ts and secrets/, not this file.",
+    "type": "module",
+    "license": "MIT",
+    "scripts": {
+        "check": "tsc -p .",
+        "test": "node --test secrets.test.ts"
+    }
+}
