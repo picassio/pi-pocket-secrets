@@ -328,14 +328,27 @@ test("secret_request: the owner types the value on a card; Pi gets 'saved', and 
     assert.match(await lastSeen(other), /Only the owner keeps secrets/);
 });
 
-test("secret_save keeps a command's output; a copy of a secret keeps the value, not [secret NAME]", async () => {
+/** Send as the owner, then answer the card that comes: allow or decline. */
+async function sayAndAnswer(id: Id, text: string, allow: boolean) {
+    const done = await submit(id, owner(app), text);
+
+    await until(() => app.approvals.forConversation(id).length === 1, "the card");
+    await app.answerApproval(app.approvals.forConversation(id)[0]!.id, allow, owner(app));
+    await done();
+}
+
+test("secret_save runs only the command the owner allowed, and keeps its output; a copy keeps the value", async () => {
     const id = await newSession(app);
 
-    await say(app, id, "save one");
+    await sayAndAnswer(id, "save one", false);
+    assert.match(await lastSeen(id), /declined: nothing was run/);
+    assert.ok(!readFileSync(join(dataDir, "secrets", "secrets.json"), "utf8").includes("MADE"));
+
+    await sayAndAnswer(id, "save one", true);
     assert.match(await lastSeen(id), /Saved MADE \(18 characters\)/);
     assert.ok(!(await stored(id)).includes("generated-42-value"));
 
-    await say(app, id, "save a copy");
+    await sayAndAnswer(id, "save a copy", true);
     const file = JSON.parse(readFileSync(join(dataDir, "secrets", "secrets.json"), "utf8"));
 
     assert.equal(file.secrets.MADE.value, "generated-42-value");

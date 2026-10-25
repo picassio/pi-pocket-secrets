@@ -14,7 +14,7 @@ API keys and tokens that Pi uses without seeing them. A drop-in extension for [P
 - **Use:** Pi writes `$NAME` (or `${NAME}`) in a bash command. Only the secrets that the command names go into its environment. The stored call keeps the name, not the value.
 - **Hide:** the value, its base64, base64url, and URL-encoded forms show as `[secret NAME]` in command output as it streams, in every tool's result, and in a message that someone pastes a value into.
 - **Ask:** `secret_request` shows the owner a card with a hidden field. The owner types the value and taps **Save secret**. Pi gets "saved", never the value.
-- **Save from a command:** `secret_save` runs a command (`gh auth token`, `openssl rand -hex 32`) and keeps its output as a secret, without showing it.
+- **Save from a command:** `secret_save` keeps a command's output (`gh auth token`, `openssl rand -hex 32`) as a secret, without showing it. The command runs outside Pi's bash, and so outside Lancet Guard: the owner first reads it on a card and taps **Run and save**.
 - **List:** `secrets_list` gives the names and descriptions that Pi may use in the session's folder. The system prompt lists them too. Plan mode lets `secrets_list` run.
 
 ## Who may use what

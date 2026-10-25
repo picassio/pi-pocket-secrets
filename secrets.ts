@@ -406,8 +406,29 @@ export default function createSecrets(host: Host, web: Web) {
                 return reply(ownerOnly(), true);
             }
 
+            // The command runs outside Pi's bash, so outside Lancet Guard: the owner reads it and allows it first.
+            const asked = await host.ask(
+                {
+                    conversationId: api.conversationId,
+                    id: `secret-save:${String(api.taskId)}:${api.callId}`,
+                    taskId: api.taskId,
+                    callId: api.callId,
+                    title: line(`Run this and keep its output as ${args.name}?`, 120),
+                    text: `${args.command.slice(0, 1500)} — its output is kept in Menu → Secrets, and nobody sees it.`,
+                    submit: "Run and save",
+                },
+                context,
+            );
+
+            if (!asked.answered) {
+                return reply(
+                    `${asked.by} declined: nothing was run, and there is no new ${args.name}.`,
+                    true,
+                );
+            }
+
             const cwd = await cwdOf(api, context);
-            // The secrets that the command names, as Pi's bash would give them (no asking: the owner's own work).
+            // The secrets that the command names, as Pi's bash would give them (the owner allowed this command).
             const env: Record<string, string> = {};
 
             for (const name of namesIn(args.command)) {
