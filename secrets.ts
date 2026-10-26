@@ -33,6 +33,8 @@ export const pocketApi = 2;
 
 /** How long an allowed command may take to start, after the hook let it through, before its values are not given. */
 const ALLOWED_FOR = 60_000;
+/** The longest command `secret_save` runs: all of it fits on the owner's card (2,000 characters with the words). */
+const MAX_COMMAND = 1500;
 /** How long `secret_save`'s command may run. */
 const SAVE_TIMEOUT = 30_000;
 
@@ -84,7 +86,10 @@ export default function createSecrets(host: Host, web: Web) {
 
     // ─── Hiding ──────────────────────────────────────────────────────────────
 
-    /** The functions that stop hiding each secret's forms, by name. */
+    /**
+     * The functions that stop hiding each secret's forms, by name. A secret is here only when every form of its value is
+     * hidden: one that is not is never given to a command.
+     */
     const hidden = new Map<string, (() => void)[]>();
 
     const unhide = (name: string) => {
@@ -106,15 +111,22 @@ export default function createSecrets(host: Host, web: Web) {
 
         const stops: (() => void)[] = [];
 
-        for (const form of formsOf(value)) {
-            try {
+        try {
+            for (const form of formsOf(value)) {
                 stops.push(host.hide({ value: form, label: `secret ${name}` }));
-            } catch (error) {
-                host.notice(
-                    "warning",
-                    `Secrets could not hide a form of ${name}: ${(error as Error).message}`,
-                );
             }
+        } catch {
+            for (const stop of stops) {
+                stop();
+            }
+
+            // A fixed message: the error could quote the value.
+            host.notice(
+                "warning",
+                `Secrets could not keep ${name} out of output, so commands do not get it. Change its value in Menu → Secrets.`,
+            );
+
+            return;
         }
 
         hidden.set(name, stops);
@@ -175,7 +187,8 @@ export default function createSecrets(host: Host, web: Web) {
         for (const name of entry!.names) {
             const value = store.value(name);
 
-            if (value !== undefined) {
+            // Only a value whose every form is hidden.
+            if (value !== undefined && hidden.has(name)) {
                 env[name] = value;
             }
         }
@@ -190,6 +203,10 @@ export default function createSecrets(host: Host, web: Web) {
     /** Why a session may not use a secret here, or undefined when it may. */
     const refusal = (name: string, cwd: string, owner: boolean): string | undefined => {
         const secret = store.get(name)!;
+
+        if (!hidden.has(name)) {
+            return `$${name} could not be kept out of output, so it is not given (the owner changes its value in Menu → Secrets)`;
+        }
 
         if (!store.inFolder(name, cwd)) {
             return `$${name} may be used only in ${secret.folders.join(", ")}`;
@@ -239,6 +256,13 @@ export default function createSecrets(host: Host, web: Web) {
 
             const asking = used.filter((name) => store.get(name)!.ask);
 
+            // The owner allows exactly what the card shows.
+            if (asking.length > 0 && command.length > MAX_COMMAND) {
+                return {
+                    block: `Secrets: ${names(asking)} asks first, and this command is longer than the ${MAX_COMMAND} characters the card shows. Keep it shorter.`,
+                };
+            }
+
             if (asking.length > 0) {
                 // The answer is kept in the call's memo, so a restart after it never asks twice. It holds no value.
                 let answer = await api.memo<{ allow: boolean; by: string }>("secrets.ask", context);
@@ -251,7 +275,7 @@ export default function createSecrets(host: Host, web: Web) {
                             taskId: api.taskId,
                             callId: call.id,
                             title: line(`Allow ${names(asking)} in this command?`, 120),
-                            text: `Pi wants to run:\n${command.slice(0, 1500)}\n\nThe command gets the value. Pi does not see it.`,
+                            text: `Pi wants to run: ${command} — the command gets the value; Pi does not see it.`,
                             submit: "Allow",
                         },
                         context,
@@ -406,7 +430,14 @@ export default function createSecrets(host: Host, web: Web) {
                 return reply(ownerOnly(), true);
             }
 
-            // The command runs outside Pi's bash, so outside Lancet Guard: the owner reads it and allows it first.
+            // The command runs outside Pi's bash, so outside Lancet Guard: the owner reads all of it and allows it first.
+            if (args.command.length > MAX_COMMAND) {
+                return reply(
+                    `The command is longer than ${MAX_COMMAND} characters, more than the owner's card shows. Nothing was run: keep it shorter.`,
+                    true,
+                );
+            }
+
             const asked = await host.ask(
                 {
                     conversationId: api.conversationId,
@@ -414,7 +445,8 @@ export default function createSecrets(host: Host, web: Web) {
                     taskId: api.taskId,
                     callId: api.callId,
                     title: line(`Run this and keep its output as ${args.name}?`, 120),
-                    text: `${args.command.slice(0, 1500)} — its output is kept in Menu → Secrets, and nobody sees it.`,
+                    // The whole command: the card shows exactly what runs.
+                    text: `${args.command} — its output is kept in Menu → Secrets, and nobody sees it.`,
                     submit: "Run and save",
                 },
                 context,
@@ -434,7 +466,7 @@ export default function createSecrets(host: Host, web: Web) {
             for (const name of namesIn(args.command)) {
                 const value = store.value(name);
 
-                if (value !== undefined && store.inFolder(name, cwd)) {
+                if (value !== undefined && hidden.has(name) && store.inFolder(name, cwd)) {
                     env[name] = value;
                 }
             }
@@ -461,9 +493,10 @@ export default function createSecrets(host: Host, web: Web) {
                 return reply(`The command did not run: ${clean(result.error)}`, true);
             }
 
+            // Not its output: a command can print the new value to stderr, in a form nothing here knows.
             if (result.code !== 0) {
                 return reply(
-                    `The command failed (exit ${String(result.code)}); nothing was saved.\n${clean(result.stderr).slice(-2000)}`,
+                    `The command failed (exit ${String(result.code)}); nothing was saved. Its output is not shown, since it may hold the value: run it in bash without the secret part to see why.`,
                     true,
                 );
             }

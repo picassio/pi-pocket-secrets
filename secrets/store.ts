@@ -13,8 +13,10 @@ import { join, resolve } from "node:path";
 export const SECRET_NAME = /^[A-Z_][A-Z0-9_]{0,63}$/;
 /** `host.hide` takes values of 4 characters or more; shorter would hide ordinary text. We ask for 8. */
 export const MIN_LENGTH = 8;
-/** `host.hide` takes values up to 4096 characters. */
-export const MAX_LENGTH = 4096;
+/** `host.hide` takes values up to 4096 characters: every form of a value (its base64 is longer) must fit. */
+export const MAX_FORM = 4096;
+/** A value, as typed: the longest whose every form `host.hide` can take is checked by `hideable`. */
+export const MAX_LENGTH = 3000;
 export const MAX_DESCRIPTION = 300;
 export const MAX_FOLDERS = 20;
 export const MAX_SECRETS = 400;
@@ -54,7 +56,10 @@ export function namesIn(command: string): string[] {
     ];
 }
 
-/** The forms of a value that output can hold: as it is, base64 (with and without padding), base64url, URL-encoded. */
+/**
+ * The forms of a value that output can hold: as it is, base64 (with and without padding), base64url, URL-encoded. Each
+ * is hidden; a value with a form too long to hide is refused (`hideable`), never kept half hidden.
+ */
 export function formsOf(value: string): string[] {
     const bytes = Buffer.from(value, "utf8");
 
@@ -66,8 +71,11 @@ export function formsOf(value: string): string[] {
             bytes.toString("base64url"),
             encodeURIComponent(value),
         ]),
-    ].filter((form) => form.length >= MIN_LENGTH && form.length <= MAX_LENGTH);
+    ].filter((form) => form.length >= MIN_LENGTH);
 }
+
+/** Whether `host.hide` can take every form of a value. */
+export const hideable = (value: string) => formsOf(value).every((form) => form.length <= MAX_FORM);
 
 /** A folder as written (`~/work/site`), as an absolute path without a trailing `/`. */
 export function folderPath(folder: string): string {
@@ -140,7 +148,8 @@ export class Store {
                 const aside = `${this.#file}.bad-${this.#now()}`;
 
                 renameSync(this.#file, aside);
-                problem = `The secrets file could not be read (${error instanceof Error ? error.message : String(error)}). It was moved to ${aside}, and Secrets starts with none.`;
+                // A fixed message: a parser's words can quote the file, and so a value, into a notice.
+                problem = `The secrets file could not be read. It was moved to ${aside}, and Secrets starts with none.`;
             }
         }
 
@@ -216,6 +225,10 @@ export class Store {
             throw new Error(`${name}'s value is one line of at most ${MAX_LENGTH} characters.`);
         }
 
+        if (!hideable(value)) {
+            throw new Error(`${name}'s value is too long to keep out of output in all its forms.`);
+        }
+
         const description =
             patch.description === undefined ? (before?.description ?? "") : patch.description;
 
@@ -267,18 +280,23 @@ export class Store {
             ...(before?.usedAt === undefined ? {} : { usedAt: before.usedAt }),
         };
 
+        // The file first: if it cannot be written, nothing changes, and no unsaved value is given to commands.
+        this.#save(new Map(this.#secrets).set(name, stored));
         this.#secrets.set(name, stored);
-        this.#save();
 
         return this.get(name)!;
     }
 
     remove(name: string): boolean {
-        if (!this.#secrets.delete(name)) {
+        if (!this.#secrets.has(name)) {
             return false;
         }
 
-        this.#save();
+        const rest = new Map(this.#secrets);
+
+        rest.delete(name);
+        this.#save(rest);
+        this.#secrets.delete(name);
 
         return true;
     }
@@ -312,7 +330,7 @@ export class Store {
         }
     }
 
-    #save(): void {
+    #save(secrets: ReadonlyMap<string, Stored> = this.#secrets): void {
         mkdirSync(this.#folder, { recursive: true, mode: 0o700 });
         chmodSync(this.#folder, 0o700);
         const temporary = `${this.#file}.${process.pid}.tmp`;
@@ -323,7 +341,7 @@ export class Store {
                 {
                     version: 1,
                     ...(this.#owner === undefined ? {} : { owner: this.#owner }),
-                    secrets: Object.fromEntries(this.#secrets),
+                    secrets: Object.fromEntries(secrets),
                 },
                 null,
                 2,

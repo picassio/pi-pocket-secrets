@@ -6,8 +6,10 @@ import {
     cpSync,
     existsSync,
     mkdirSync,
+    mkdtempSync,
     readdirSync,
     readFileSync,
+    rmSync,
     statSync,
     writeFileSync,
 } from "node:fs";
@@ -104,6 +106,23 @@ const model = scriptedModel((request: { messages: unknown[] }) => {
 
     if (text.endsWith("list them")) {
         return call("secrets_list", {});
+    }
+
+    if (text.endsWith("save a long one")) {
+        return call("secret_save", {
+            name: "LONG",
+            command: `echo ${"x".repeat(1600)}`,
+            description: "too long to show",
+        });
+    }
+
+    if (text.endsWith("save a failing one")) {
+        return call("secret_save", {
+            name: "FAILS",
+            // The command makes the text: its own words do not hold it.
+            command: "printf 'leaked-on-stderr-%s\\n' $((100 + 23)) >&2; exit 3",
+            description: "fails",
+        });
     }
 
     return fauxAssistantMessage([fauxText(`echo: ${text}`)]);
@@ -489,4 +508,54 @@ test("until the owner's tab says who the owner is, a known person's command gets
     } finally {
         await third.close();
     }
+});
+
+// ─── From the gallery review (TannerMidd/pi-pocket-extensions#28) ────────────────────────────────
+
+test("secret_save refuses a command longer than its card shows, and asks nothing", async () => {
+    const id = await newSession(app);
+
+    await say(app, id, "save a long one");
+    assert.match(await lastSeen(id), /longer than 1500 characters[^]*Nothing was run/);
+    assert.equal(app.approvals.forConversation(id).length, 0);
+});
+
+test("a failed secret_save gives back no output: stderr could hold the value", async () => {
+    const id = await newSession(app);
+
+    await sayAndAnswer(id, "save a failing one", true);
+    assert.match(await lastSeen(id), /failed \(exit 3\); nothing was saved/);
+    assert.ok(!(await stored(id)).includes("leaked-on-stderr-123"));
+    assert.ok(!sent.join("").includes("leaked-on-stderr-123"));
+});
+
+test("a value with a form too long to hide is refused, never kept half hidden", async () => {
+    // 2,000 non-ASCII characters: short, but URL-encoded far longer than host.hide takes.
+    const wide = await http("owner", "secrets/WIDE", "PUT", { value: "é".repeat(2000) });
+
+    assert.equal(wide.status, 400);
+    assert.match(wide.text, /too long to keep out of output in all its forms/);
+    assert.equal((await http("owner", "secrets/HUGE", "PUT", { value: "x".repeat(3001) })).status, 400);
+});
+
+test("a value that cannot be saved is not kept, and the notice of a bad file quotes nothing of it", async () => {
+    const { Store } = await import(join(import.meta.dirname, "secrets", "store.ts"));
+    const folder = mkdtempSync(join(root, "store-"));
+    const store = new Store(folder);
+
+    store.set("FIRST", { value: "first-value-1234" });
+    // The file cannot be replaced: a folder stands in its place.
+    rmSync(join(folder, "secrets", "secrets.json"));
+    mkdirSync(join(folder, "secrets", "secrets.json"));
+    assert.throws(() => store.set("SECOND", { value: "second-value-5678" }));
+    assert.equal(store.value("SECOND"), undefined, "nothing in memory that is not in the file");
+    assert.throws(() => store.remove("FIRST"));
+    assert.equal(store.value("FIRST"), "first-value-1234");
+    rmSync(join(folder, "secrets", "secrets.json"), { recursive: true });
+
+    writeFileSync(join(folder, "secrets", "secrets.json"), '{"secrets": {"X": "leaky-value-999" ');
+    const broken = new Store(folder);
+
+    assert.ok(broken.problem !== undefined);
+    assert.doesNotMatch(broken.problem!, /leaky-value-999/);
 });
