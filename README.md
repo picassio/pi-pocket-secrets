@@ -12,9 +12,9 @@ API keys and tokens that Pi uses without seeing them. A drop-in extension for [P
 
 - **Keep:** Menu → **Secrets** (the owner only). Each secret has a name that is an environment variable's (`DEEPSEEK_API_KEY`), a value, what it is for, the folders where it may be used (none: anywhere), "guests' messages may use it too", and "ask before each command that uses it".
 - **Use:** Pi writes `$NAME` (or `${NAME}`) in a bash command. Only the secrets that the command names go into its environment. The stored call keeps the name, not the value.
-- **Hide:** the value, its base64, base64url, and URL-encoded forms show as `[secret NAME]` in command output as it streams, in every tool's result, and in a message that someone pastes a value into.
+- **Hide:** the value, its base64, base64url, and URL-encoded forms show as `[secret NAME]` in command output as it streams, in every tool's result, and in a message that someone pastes a value into. A value is 8 to 3,000 characters, and every form must fit what Pi Pocket can hide; a secret whose forms are not all hidden is never given to a command.
 - **Ask:** `secret_request` shows the owner a card with a hidden field. The owner types the value and taps **Save secret**. Pi gets "saved", never the value.
-- **Save from a command:** `secret_save` keeps a command's output (`gh auth token`, `openssl rand -hex 32`) as a secret, without showing it. The command runs outside Pi's bash, and so outside Lancet Guard: the owner first reads it on a card and taps **Run and save**.
+- **Save from a command:** `secret_save` keeps a command's output (`gh auth token`, `openssl rand -hex 32`) as a secret, without showing it. The command runs outside Pi's bash, and so outside Lancet Guard: the owner first reads all of it on a card (it may be up to 1,500 characters, so the card shows every one) and taps **Run and save**. When the command fails, its output is not shown: it may hold the value.
 - **List:** `secrets_list` gives the names and descriptions that Pi may use in the session's folder. The system prompt lists them too. Plan mode lets `secrets_list` run.
 
 ## Who may use what
